@@ -1,4 +1,5 @@
 #include <iostream>
+#include <algorithm>
 #include <string>
 #include <vector>
 #include <set>
@@ -21,6 +22,180 @@ public:
 	virtual Itemset nextTransaction() = 0;
 
 	virtual ~Database() {}
+};
+
+template <class ItemType>
+class FP
+{
+public:
+	struct Node {
+		Node()
+		: parent(nullptr), neighbor(nullptr), supportCount(0), item(nullptr)
+		{}
+
+		Node* parent;
+		Node* neighbor;
+		std::vector<Node*> children;
+		size_t supportCount;
+		ItemType* item;
+
+		Node* findChild(ItemType item)
+		{
+			for(Node* child : children) {
+				if(*child->item == item) {
+					return child;
+				}
+			}
+
+			return nullptr;
+		}
+	};
+
+	typedef std::set<ItemType> Itemset;
+	typedef std::map<Itemset, size_t> Itemsets;
+
+	FP(Database<ItemType>& database, size_t supportCount)
+		: database(database), numberOfTransactions(0), supportCount(supportCount)
+	{
+	}
+
+	void calculateFrequentItemsets()
+	{
+		createHeaderTable();
+		createTree();
+		mineTree();
+		printTree();
+	}
+
+private:
+	void printTree()
+	{
+		std::cout << "Header table: " << std::endl;
+		for(auto& headerPair : headerTable) {
+			std::cout << headerPair.first << " " << headerPair.second.first << std::endl;
+		}
+		std::cout << "_______________" << std::endl;
+
+		std::cout << "Tree: " << std::endl;
+		for(auto& headerPair : headerTable) {
+			Node* neighbor = headerPair.second.second;
+			while(neighbor != nullptr) {
+				std::cout << *neighbor->item << ":" << neighbor->supportCount;
+
+				if(neighbor->neighbor != nullptr) {
+					std::cout << " -> ";
+				}
+
+				neighbor = neighbor->neighbor;
+			}
+
+			std::cout << std::endl;
+		}
+	}
+
+	void mineTree()
+	{
+
+	}
+
+	void createHeaderTable()
+	{
+		std::cout << "Initializing header table." << std::endl;
+
+		database.open();
+
+		while(!database.isDone()) {
+			Itemset itemset = database.nextTransaction();
+
+			for(auto& item : itemset)
+			{
+				if(headerTable.count(item) == 0) {
+					headerTable[item] = std::make_pair(0, nullptr);
+					order.push_back(item);
+				}
+
+				headerTable[item].first += 1;
+				numberOfTransactions++;
+			}
+		}
+
+		database.close();
+
+		// TODO REMOVE INFREQUENT ITEMS ALREADY
+
+		std::cout << "Found " << numberOfTransactions << " transactions, " << order.size() << " unique items." << std::endl;
+
+		std::cout << "Sorting items: ";
+		std::sort(order.begin(), order.end(), [this](const ItemType& a, const ItemType& b) -> bool { return this->itemSorter(a, b, true); });
+		std::cout << "[DONE]" << std::endl;
+	}
+
+	void createTree()
+	{
+		std::cout << "Creating FP tree: ";
+
+		database.open();
+
+		while(!database.isDone()) {
+			Itemset itemset = database.nextTransaction();
+			std::vector<ItemType> items(itemset.begin(), itemset.end());
+
+			std::sort(items.begin(), items.end(), [this](const ItemType& a, const ItemType& b) -> bool { return this->itemSorter(a, b); });
+
+			// Every transaction starts insertion at root.
+			Node* currentRoot = &root;
+
+			for(auto& item : items) {
+				Node* node = currentRoot->findChild(item);
+				if(node == nullptr) {
+					node = new Node;
+					node->parent = currentRoot;
+					node->item = new ItemType(item);
+
+					// Else insert it as child.
+					currentRoot->children.push_back(node);
+
+					// Insert as first link in header table if none exists yet.
+					if(headerTable[item].second == nullptr) {
+						headerTable[item].second = node;
+					} else {
+						// Otherwise we follow the links and add as neighbor.
+						Node* prev = headerTable[item].second;
+						while(prev->neighbor != nullptr) {
+							prev = prev->neighbor;
+						}
+
+						prev->neighbor = node;
+					}
+				}
+
+				node->supportCount++;
+				currentRoot = node;
+
+			}
+		}
+
+		database.close();
+
+		std::cout << "[DONE]" << std::endl;
+	}
+
+	bool itemSorter(const ItemType& a, const ItemType& b, bool invert = false)
+	{
+		if(invert) {
+			return headerTable[a].first < headerTable[b].first;
+		}
+
+		return headerTable[a].first > headerTable[b].first;
+	}
+
+	std::map<ItemType, std::pair<size_t, Node*>> headerTable;
+
+	size_t supportCount;
+	size_t numberOfTransactions;
+	Database<ItemType>& database;
+	Node root;
+	std::vector<ItemType> order;
 };
 
 template <class ItemType>
@@ -334,8 +509,11 @@ private:
 
 int main()
 {
-	DatDatabase<int> db("mushroom.dat");
-	Apriori<int> apriori(db, 20);
+	DatDatabase<std::string> db("mushroom.dat");
+	FP<std::string> fp(db, 3);
+	fp.calculateFrequentItemsets();
+
+	/*Apriori<std::string> apriori(db, 2);
 	apriori.calculateFrequentItemsets();
 
 	auto& frequentItemsets = apriori.getFrequentItemsets();
@@ -349,6 +527,6 @@ int main()
 			std::cout << " : " << itemset.second << std::endl;
 		}
 		std::cout << "_____________________" << std::endl << std::endl;
-	}
+	}*/
 
 }
